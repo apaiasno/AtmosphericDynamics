@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 ### Time-related routines ###
 
 def phase_fold(times, t0, P):
-    ''' Phase fold the times of lightcurve.
+    ''' Phase-fold observation times.
         Inputs:
         - times: 1-D numpy array of times associated with data (make sure it's the same time system as the ephemeris)
         - t0: float representing reference mid-transit time for the system 
@@ -55,13 +55,15 @@ class FluxMap:
             - wav: 1-D numpy array of wavelengths
             - t: float representing time of observation (make sure it's the same time system as the ephemeris)
             - flux: 1-D numpy array of fluxes
-            - flux: 1-D numpy array of flux errors
+            - flux_err: 1-D numpy array of flux errors
             - t0: float representing mid-transit time ephemeris for system
             - P: float representing period for system (make sure units are consistent with t0 and t)
+            - T14: transit duration between 1st and 4th contact (make sure units are consistent with t0 and t)
+            - tau: ingress/egress duration (make sure units are consistent with t0 and t)
             - time_system: string representing timing system used by observations and ephemeris
             - spec_type: bool representing type of spectrum (True = transmission, False = stellar) 
             Outputs:
-            - self: initial FluxMap object
+            - self: FluxMap object
         '''
             
         self.wav = np.geomspace(wav.min(), wav.max(), len(wav))        
@@ -76,6 +78,8 @@ class FluxMap:
         self.time_system = time_system
         self.spec_type = spec_type
         self.num_obs = np.shape(self.fluxes)[0]
+        self.is_out = abs(self.phases) > self.T14/(2*self.P) # fully out-of-transit
+        self.is_in = abs(self.phases) < ((self.T14/2) - self.tau)/self.P # fully in-transit
        
     def addNewObservation(self, wav_new, t_new, flux_new, flux_new_err):
         ''' Adds a new observation to flux map.
@@ -90,10 +94,33 @@ class FluxMap:
         flux_interp = interpolate_spec(wav_new, flux_new, self.wav)
         flux_interp_err = interpolate_spec(wav_new, flux_new_err, self.wav)
         self.times = np.hstack([self.times, t_new])
-        self.phases = np.hstack([self.phases, phase_fold(np.array([t_new]), self.t0, self.P)])
+        self.phases = phase_fold(self.times, self.t0, self.P)
+        self.is_out = abs(self.phases) > self.T14/(2*self.P) # fully out-of-transit
+        self.is_in = abs(self.phases) < ((self.T14/2) - self.tau)/self.P # fully in-transit
         self.fluxes = np.vstack([self.fluxes, flux_interp])
         self.fluxes_err = np.vstack([self.fluxes_err, flux_interp_err])*np.sqrt(len(self.wav)/len(wav_new))
         self.num_obs = len(self.fluxes)
+    
+    def makeTransSpectra(self):
+            ''' Divide out stellar component from FluxMap fluxes to recover transmission spectra.
+                Inputs:
+                - self: FluxMap object with spec_type attribute set to False (fluxes are raw stellar spectra)
+                Outputs:
+                - self: FluxMap object with spec_type attribute set to True (fluxes are reduced transmission spectra)
+            '''
+            if not self.spec_type:
+                weights = 1./(self.fluxes_err[self.is_out]**2) # weighted by inverse squared errors (inverse of variance)
+                flux_stellar = np.sum(self.fluxes[self.is_out]*weights, axis=0)/np.sum(weights, axis=0) # stellar component = weighted mean of out-of-transit observations
+                coefs = weights/np.sum(weights, axis=0)
+                flux_stellar_err = np.sqrt(np.sum((coefs*self.fluxes_err[self.is_out])**2, axis=0)) # propagate errors
+                fluxes_trans = self.fluxes/flux_stellar
+                fluxes_trans_err = fluxes_trans * np.sqrt((self.fluxes_err/self.fluxes)**2 + (flux_stellar_err/flux_stellar)**2)
+                self.fluxes = fluxes_trans
+                self.fluxes_trans_err = fluxes_trans_err
+                self.flux_stellar = flux_stellar
+                self.spec_type = True
+            else:
+                print('Spectrum type is already transmission.')
         
 def save_object(obj, filename):
     with open(filename, 'wb') as outp:  # Overwrites any existing file.
