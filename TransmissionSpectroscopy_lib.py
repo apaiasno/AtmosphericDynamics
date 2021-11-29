@@ -4,6 +4,13 @@
 # Imports
 import numpy as np
 import scipy
+import scipy.interpolate
+
+try:
+    import cPickle as pickle
+except ModuleNotFoundError:
+    import pickle
+
 
 ### Wavelength-related routines ###
 
@@ -41,12 +48,14 @@ def interpolate_spec(wav, flux, wav_new):
 
 class FluxMap:
     
-    def __init__(self, wav, t, flux, t0, t0_err, P, P_err, time_system='JD_UTC', spec_type=False):
+    def __init__(self, wav, t, flux, flux_err, t0, t0_err, P, P_err, T14, tau,
+                 time_system='JD_UTC', spec_type=False):
         ''' Generates flux map from initial spectrum.
             Inputs:
             - wav: 1-D numpy array of wavelengths
             - t: float representing time of observation (make sure it's the same time system as the ephemeris)
             - flux: 1-D numpy array of fluxes
+            - flux: 1-D numpy array of flux errors
             - t0: float representing mid-transit time ephemeris for system
             - P: float representing period for system (make sure units are consistent with t0 and t)
             - time_system: string representing timing system used by observations and ephemeris
@@ -55,30 +64,40 @@ class FluxMap:
             - self: initial FluxMap object
         '''
             
-        self.wav = wav        
+        self.wav = np.geomspace(wav.min(), wav.max(), len(wav))        
         self.times = np.array([t])
         self.fluxes = flux
-        self.t0 = t0
-        self.t0_err = t0_err
-        self.P = P
-        self.P_err = P_err
-        self.phases = np.array([phase_fold(t, t0, P)])
+        self.fluxes_err = flux_err
+        self.t0, self.t0_err = t0, t0_err
+        self.P, self.P_err = P, P_err
+        self.T14 = T14
+        self.tau = tau
+        self.phases = phase_fold(self.times, t0, P)
         self.time_system = time_system
         self.spec_type = spec_type
         self.num_obs = np.shape(self.fluxes)[0]
        
-    def addNewObservation(self, wav_new, t_new, flux_new):
+    def addNewObservation(self, wav_new, t_new, flux_new, flux_new_err):
         ''' Adds a new observation to flux map.
             Inputs:
             - wav_new: 1-D numpy array of wavelengths of new observation
             - t_new: float representig time of new observation (make sure it's the same time system as the ephemeris)
             - flux_new: 1-D numpy array of fluxes of new observation
+            - flux_new_err: 1-D numpy array of flux errors of new observation
             Outputs:
             - self: FluxMap object updated with new observation
         '''
         flux_interp = interpolate_spec(wav_new, flux_new, self.wav)
+        flux_interp_err = interpolate_spec(wav_new, flux_new_err, self.wav)
+        self.times = np.hstack([self.times, t_new])
+        self.phases = np.hstack([self.phases, phase_fold(np.array([t_new]), self.t0, self.P)])
         self.fluxes = np.vstack([self.fluxes, flux_interp])
-        self.num_obs = np.len(self.fluxes)
+        self.fluxes_err = np.vstack([self.fluxes_err, flux_interp_err])*np.sqrt(len(self.wav)/len(wav_new))
+        self.num_obs = len(self.fluxes)
+        
+def save_object(obj, filename):
+    with open(filename, 'wb') as outp:  # Overwrites any existing file.
+        pickle.dump(obj, outp, pickle.HIGHEST_PROTOCOL)
         
         
         
