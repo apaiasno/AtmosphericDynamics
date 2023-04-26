@@ -221,8 +221,8 @@ def make_transmission_template(planet_name, planet_config, petit_config, species
     else:
         return wav_pl, rad_pl, flx_pl, temperatures
 
-def find_lines(pressures, contr_func, pressure_threshhold, order):
-    ''' Identify absorption features and split into high vs. low altitude.
+def find_lines(pressures, contr_func, pressure_threshold, order):
+    ''' Identify absorption feature line centers and split into high vs. low altitude.
 
         Parameters
         ----------
@@ -230,7 +230,7 @@ def find_lines(pressures, contr_func, pressure_threshhold, order):
             Model pressure levels (in bars)
         contr_func : 2-D numpy array
             Contribution function corresponding to contribution from each pressure level at a each wavelength
-        pressure_threshhold : float
+        pressure_threshold : float
             Percentile of high altitude lines
         order : integer
             Input to finding relative minima; corresponds to how many points on each side for comparison 
@@ -241,13 +241,13 @@ def find_lines(pressures, contr_func, pressure_threshhold, order):
         pressures_eff : 1-D numpy array
             Effective pressure probed at each wavelength
         line_indices : 1-D numpy array
-            Indices of wavelength array that correspond to a spectral line
+            Indices of wavelength array that correspond to a spectral line center
         high_alt : 1-D boolean array
-            True if index in line_indices corresponds to a high altitude line
+            True if index in line_indices corresponds to a high altitude line center
     '''
     pressure_eff = np.dot(pressures, contr_func) # effective pressure probed at each wavelength
     line_indices, = scipy.signal.argrelextrema(pressure_eff, np.less, order=order)
-    high_alt = pressure_eff[line_indices] <= np.percentile(pressure_eff[line_indices], pressure_threshhold)
+    high_alt = pressure_eff[line_indices] <= np.percentile(pressure_eff[line_indices], pressure_threshold)
     return pressure_eff, line_indices, high_alt
 
 def make_altitude_mask(alt_indices, width, num_wav):
@@ -264,14 +264,15 @@ def make_altitude_mask(alt_indices, width, num_wav):
             
         Returns
         -------
-        ind_lines_center : 1-D numpy array
-            Array of indices corresponding to spectral line centers for a given altitude bin       
-        ind_lines: list of 1-D numpy arrays
-            Array of indices corresponding to spectral lines assuming a fixed line width
-            
+        ind_lines : 1-D numpy array
+            Array of indices corresponding to spectral lines for a given altitude bin assuming 
+            a fixed width     
+        ind_lines_list: list of 1-D numpy arrays
+            Same as ind_lines, but grouped by which indices correspond to the same spectral line
+            (useful for plotting)
     '''
-    ind_lines_center = np.array([], dtype=int)
-    ind_lines = []
+    ind_lines = np.array([], dtype=int)
+    ind_lines_list = []
     for ind in alt_indices:
         ind_low = ind - width
         ind_up = ind + width + 1
@@ -279,11 +280,11 @@ def make_altitude_mask(alt_indices, width, num_wav):
             ind_low = 0
         if ind_up > num_wav - 1:
             ind_up = num_wav - 1
-        ind_lines_center = np.hstack([ind_lines_center, np.arange(ind_low, ind_up, dtype=int)])
-        ind_lines.append(np.arange(ind_low, ind_up, dtype=int))
-    return ind_lines_center, ind_lines 
+        ind_lines = np.hstack([ind_lines, np.arange(ind_low, ind_up, dtype=int)])
+        ind_lines_list.append(np.arange(ind_low, ind_up, dtype=int))
+    return ind_lines, ind_lines_list 
 
-def make_altitude_temp(flx_temp, rad_temp, alt_mask, R_p):
+def make_altitude_temp(flx_temp, rad_temp, ind_lines, R_p):
     ''' Builds template for masked lines.
         
         Parameters
@@ -292,7 +293,7 @@ def make_altitude_temp(flx_temp, rad_temp, alt_mask, R_p):
             Planet template spectrum
         rad_temp : 1-D numpy array
             Planet radius as a function of wavelength
-        alt_mask : 1-D numpy array
+        ind_lines : 1-D numpy array
             Indices corresponding to spectra lines
         R_p : float with units
             Radius of planet
@@ -305,7 +306,7 @@ def make_altitude_temp(flx_temp, rad_temp, alt_mask, R_p):
             Planet radius as a function of wavelength for lines in a given altitude bin
     '''
     flx_temp_alt = np.ones_like(flx_temp)
-    flx_temp_alt[alt_mask] = flx_temp[alt_mask]
+    flx_temp_alt[ind_lines] = flx_temp[ind_lines]
     rad_temp_alt = np.ones_like(flx_temp) * R_p.to(u.cm).value
-    rad_temp_alt[alt_mask] = rad_temp[alt_mask]
+    rad_temp_alt[ind_lines] = rad_temp[ind_lines]
     return flx_temp_alt, rad_temp_alt
